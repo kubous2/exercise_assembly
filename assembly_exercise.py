@@ -1,3 +1,7 @@
+# imports
+from Bio import SeqIO
+from collections import Counter
+
 # ========== Exercise 4 - functions copies
 def in_out_degree(graph):
     in_degree = {vertex: 0 for vertex in graph.keys()}
@@ -271,8 +275,128 @@ def eulerian_path(graph, verbose=False):
 
     return hierholzer(graph, start_node, verbose)
 
+# =====================TASK 4 - Repeats and Contigs=======================
+def contigs(graph):
+    """
+    Finds all maximal non-branching paths (contigs) in a de Bruijn graph.
+    Returns a sorted list of the spelled strings.
+    """
+    in_deg, out_deg = in_out_degree(graph)
+    all_nodes = set(graph.keys()).union(in_deg.keys()).union(out_deg.keys())
+
+    # Dictionary to keep track of unused edges to handle parallel edges and cycles
+    unused = {u: list(vs) for u, vs in graph.items()}
+
+    # 1. Separate nodes into 1-in-1-out and others
+    not_1_in_1_out = []
+    for node in all_nodes:
+        if in_deg.get(node, 0) == 1 and out_deg.get(node, 0) == 1:
+            pass  # It's a 1-in-1-out node
+        else:
+            not_1_in_1_out.append(node)
+
+    paths = []
+
+    # 2. Start a path from every outgoing edge of every node that is NOT 1-in-1-out
+    for start_node in not_1_in_1_out:
+        while unused.get(start_node):
+            nxt = unused[start_node].pop()
+            current_path = [start_node, nxt]
+
+            # Follow edges as long as the node we reached is 1-in-1-out
+            while in_deg.get(current_path[-1], 0) == 1 and out_deg.get(current_path[-1], 0) == 1:
+                curr = current_path[-1]
+                next_node = unused[curr].pop()
+                current_path.append(next_node)
+
+            paths.append(current_path)
+
+    # 3. Handle isolated cycles (all nodes in the cycle are 1-in-1-out)
+    for node in all_nodes:
+        while unused.get(node):
+            cycle = [node]
+            curr = node
+            # Trace the isolated cycle
+            while True:
+                nxt = unused[curr].pop()
+                cycle.append(nxt)
+                curr = nxt
+                if curr == cycle[0]:
+                    break
+
+            # Rotate cycle so it starts and ends at its alphabetically first node
+            cycle_nodes = cycle[:-1]
+            min_node = min(cycle_nodes)
+            min_idx = cycle_nodes.index(min_node)
+            rotated_cycle = cycle_nodes[min_idx:] + cycle_nodes[:min_idx] + [min_node]
+
+            paths.append(rotated_cycle)
+
+    # Spell all found paths and return them sorted
+    contig_strings = [spell_path(p) for p in paths]
+    return sorted(contig_strings)
+
+#====================== TASK 5 - A mystery genome ==============
+def get_distinct_kmers_from_fasta(filepath, k):
+    """Reads a FASTA file and returns a set of unique k-mers from all reads."""
+    distinct_kmers = set()
+    for record in SeqIO.parse(filepath, "fasta"):
+        seq = str(record.seq)
+        distinct_kmers.update(seq[i:i + k] for i in range(len(seq) - k + 1))
+    return distinct_kmers
+
+
+def trim_cycle(spelled_string, k):
+    """Trims the end of the sequence if it forms a cycle (first k-1 letters equal the last k-1)."""
+    prefix = spelled_string[:k - 1]
+    suffix = spelled_string[-(k - 1):]
+
+    if prefix == suffix:
+        return spelled_string[:-(k - 1)]
+    return spelled_string
+
+
+def task_5_mystery_genome(fasta_path="reads.fasta"):
+    k_values = [9, 12, 13, 14, 21]
+
+    # Print the table header
+    print(
+        f"{'k':<5} | {'|V|':<6} | {'|E|':<6} | {'eulerian_type':<13} | {'contigs':<7} | {'longest contig (trimmed)':<25} | {'spelled string length'}")
+    print("-" * 100)
+
+    for k in k_values:
+        # 1. Get distinct k-mers and build the graph
+        kmers_set = get_distinct_kmers_from_fasta(fasta_path, k)
+        sorted_kmers = sorted(list(kmers_set))
+        graph = debruijn_graph(sorted_kmers)
+
+        # 2. Basic metrics (|V|, |E|, eulerian type)
+        V = len(graph)
+        E = sum(len(neighbors) for neighbors in graph.values())
+        e_type = eulerian_type(graph, directed=True)
+
+        # 3. Calculate contigs
+        all_contigs = contigs(graph)
+        num_contigs = len(all_contigs)
+
+        # Trim contigs to find the correct length of the longest actual sequence
+        trimmed_contigs = [trim_cycle(c, k) for c in all_contigs]
+        if trimmed_contigs:
+            longest_contig_len = max(len(c) for c in trimmed_contigs)
+        else:
+            longest_contig_len = 0
+
+        # 4. Find the spelled walk if an Eulerian path/circuit exists
+        spelled_len = "—"
+        if e_type != "none":
+            walk = eulerian_path(graph, verbose=False)
+            spelled_str = spell_path(walk)
+            trimmed_spelled = trim_cycle(spelled_str, k)
+            spelled_len = str(len(trimmed_spelled))
+
+        # Print the row for the current k value
+        print(f"{k:<5} | {V:<6} | {E:<6} | {e_type:<13} | {num_contigs:<7} | {longest_contig_len:<25} | {spelled_len}")
 if __name__ == "__main__":
-    from collections import Counter
 
     # ==========================TASK 2  ==============================
     print ("============ TASK 2 ================")
@@ -308,5 +432,31 @@ if __name__ == "__main__":
 
     # K-mer composition and Eulere path
     print("\nSpelled genome:", spell_path(final_walk))
+    print("\n")
+
+    # ===================== TASK 4 ===================
+    print("============ TASK 4 ================")
+    # Test Toy C (3 mers)
+    toy_C_reads = ["ATC", "CCT", "CTT", "GGT", "GTA", "GTG", "TAT", "TCT", "TGG", "TGT", "TTG"]
+    toy_C_graph = debruijn_graph(toy_C_reads)
+    print(contigs(toy_C_graph)) # ['CCT', 'CTTG', 'GTATCT', 'GTG', 'TGGT', 'TGT']
+    print("\n")
+
+    # =================== TASK 5 =====================
+    task_5_mystery_genome("reads.fasta")
+
+    k_blast = 14
+    kmers_set = get_distinct_kmers_from_fasta("reads.fasta", k_blast)
+    graph = debruijn_graph(sorted(list(kmers_set)))
+    all_contigs = contigs(graph)
+    longest_contig = max(all_contigs, key=len)
+    final_sequence = trim_cycle(longest_contig, k_blast)
+    fasta_filename = "mystery_genome.fasta"
+    with open(fasta_filename, "w") as f:
+        f.write(">mystery_genome_assembly_k14\n")
+        f.write(final_sequence + "\n")
+
+
+
 
 
